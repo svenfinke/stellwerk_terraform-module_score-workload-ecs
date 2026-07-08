@@ -12,9 +12,23 @@ locals {
   primary_container_name = local.container_names[0]
 
   # Fargate requires CPU/memory to be set at the task level.
-  # Derive from the primary container's resource limits; fall back to safe defaults.
+  # Derive from the primary container's resource limits; fall back to arm64-compatible defaults.
+  # arm64 on Fargate supports: 256 cpu (512/1024/2048 MiB), 512 cpu (1024-4096 MiB), 1024 cpu (2048-8192 MiB), 2048 cpu (4096-16384 MiB), 4096 cpu (8192-30720 MiB)
   task_cpu    = try(var.containers[local.primary_container_name].resources.limits.cpu, "256")
   task_memory = try(var.containers[local.primary_container_name].resources.limits.memory, "512")
+
+  # arm64-compatible CPU/memory pairs for Fargate
+  valid_cpu_memory_pairs = {
+    "256"  = [512, 1024, 2048]
+    "512"  = [1024, 2048, 3072, 4096]
+    "1024" = [2048, 3072, 4096, 5120, 6144, 7168, 8192]
+    "2048" = [4096, 5120, 6144, 7168, 8192, 9216, 10240, 11264, 12288, 13312, 14336, 15360, 16384]
+    "4096" = [8192, 9216, 10240, 11264, 12288, 13312, 14336, 15360, 16384, 17408, 18432, 19456, 20480, 21504, 22528, 23552, 24576, 25600, 26624, 27648, 28672, 29696, 30720]
+  }
+
+  # Validate CPU/memory combination
+  valid_memory_list = lookup(local.valid_cpu_memory_pairs, local.task_cpu, [])
+  cpu_memory_valid  = contains(local.valid_memory_list, tonumber(local.task_memory))
 
   # Build the list of container definition objects consumed by aws_ecs_task_definition.
   container_definitions = [
@@ -239,10 +253,17 @@ resource "aws_ecs_task_definition" "main" {
 
   runtime_platform {
     operating_system_family = "LINUX"
-    cpu_architecture        = "X86_64"
+    cpu_architecture        = "ARM64"
   }
 
   tags = local.common_tags
+
+  lifecycle {
+    precondition {
+      condition     = local.cpu_memory_valid
+      error_message = "CPU/memory combination not valid for arm64 Fargate. CPU: ${local.task_cpu}, Memory: ${local.task_memory}. Valid memory values for CPU ${local.task_cpu}: ${join(", ", local.valid_memory_list)}"
+    }
+  }
 }
 
 # ---------------------------------------------------------------------------
