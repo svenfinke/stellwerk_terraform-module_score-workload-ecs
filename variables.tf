@@ -82,3 +82,8 @@ variable "subnet_tier" {
   type        = string
   default     = "private"
 }
+
+variable "service" {
+  description = "Service name"
+  type        = string
+}
