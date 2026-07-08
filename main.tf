@@ -1,0 +1,211 @@
+# locals is defined in iam.tf
+
+# ---------------------------------------------------------------------------
+# Container definition helpers
+# ---------------------------------------------------------------------------
+
+locals {
+  # Ordered list of container names (stable within a plan).
+  container_names = keys(var.containers)
+
+  # Name of the primary container — first in iteration order.
+  primary_container_name = local.container_names[0]
+
+  # Fargate requires CPU/memory to be set at the task level.
+  # Derive from the primary container's resource limits; fall back to safe defaults.
+  task_cpu    = try(var.containers[local.primary_container_name].resources.limits.cpu, "256")
+  task_memory = try(var.containers[local.primary_container_name].resources.limits.memory, "512")
+
+  # Build the list of container definition objects consumed by aws_ecs_task_definition.
+  container_definitions = [
+    for name, c in var.containers : {
+      name      = name
+      image     = c.image
+      essential = name == local.primary_container_name
+
+      # Score command → ECS entryPoint; Score args → ECS command.
+      entryPoint = length(c.command) > 0 ? c.command : null
+      command    = length(c.args) > 0 ? c.args : null
+
+      # Convert env map to the ECS name/value list format.
+      environment = [
+        for k, v in c.env : { name = k, value = v }
+      ]
+
+      # Expose service_port on the primary container; other containers keep their own ports.
+      portMappings = name == local.primary_container_name ? [
+        {
+          containerPort = var.service_port
+          protocol      = "tcp"
+        }
+        ] : [
+        for _, p in c.ports : {
+          containerPort = p.port
+          protocol      = lower(p.protocol)
+        }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.main.name
+          "awslogs-region"        = data.aws_region.current.name
+          "awslogs-stream-prefix" = name
+        }
+      }
+    }
+  ]
+}
+
+data "aws_region" "current" {}
+
+# ---------------------------------------------------------------------------
+# CloudWatch Log Group
+# ---------------------------------------------------------------------------
+
+resource "aws_cloudwatch_log_group" "main" {
+  name              = "/ecs/${var.app_id}/${var.env_id}/${var.res_id}"
+  retention_in_days = 30
+
+  tags = local.common_tags
+}
+
+# ---------------------------------------------------------------------------
+# Security Group — ECS tasks
+# ---------------------------------------------------------------------------
+
+resource "aws_security_group" "ecs" {
+  name        = "${local.name_prefix}-ecs"
+  description = "ECS tasks for ${local.name_prefix}"
+  vpc_id      = data.aws_vpc.main.id
+
+  ingress {
+    description = "Allow inbound traffic on service port from within the VPC"
+    from_port   = var.service_port
+    to_port     = var.service_port
+    protocol    = "tcp"
+    cidr_blocks = [data.aws_vpc.main.cidr_block]
+  }
+
+  egress {
+    description = "Allow all outbound traffic"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-ecs"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# ECS Task Definition
+# ---------------------------------------------------------------------------
+
+resource "aws_ecs_task_definition" "main" {
+  family                   = local.name_prefix
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = local.task_cpu
+  memory                   = local.task_memory
+
+  execution_role_arn = aws_iam_role.execution.arn
+  task_role_arn      = aws_iam_role.task.arn
+
+  container_definitions = jsonencode(local.container_definitions)
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "X86_64"
+  }
+
+  tags = local.common_tags
+}
+
+# ---------------------------------------------------------------------------
+# ALB Target Group
+# ---------------------------------------------------------------------------
+
+resource "aws_lb_target_group" "main" {
+  name        = local.name_prefix
+  port        = var.service_port
+  protocol    = "HTTP"
+  vpc_id      = data.aws_vpc.main.id
+  target_type = "ip"
+
+  health_check {
+    path                = "/"
+    protocol            = "HTTP"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 30
+    timeout             = 5
+    matcher             = "200-399"
+  }
+
+  tags = local.common_tags
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# ---------------------------------------------------------------------------
+# ALB Listener Rule — catch-all forward to target group
+# ---------------------------------------------------------------------------
+
+resource "aws_lb_listener_rule" "main" {
+  listener_arn = var.lb_listener_arn
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.main.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/*"]
+    }
+  }
+
+  tags = local.common_tags
+}
+
+# ---------------------------------------------------------------------------
+# ECS Service
+# ---------------------------------------------------------------------------
+
+resource "aws_ecs_service" "main" {
+  name            = local.name_prefix
+  cluster         = data.aws_ecs_cluster.main.arn
+  task_definition = aws_ecs_task_definition.main.arn
+  desired_count   = var.desired_count
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = data.aws_subnets.selected.ids
+    security_groups  = [aws_security_group.ecs.id]
+    assign_public_ip = false
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.main.arn
+    container_name   = local.primary_container_name
+    container_port   = var.service_port
+  }
+
+  deployment_controller {
+    type = "ECS"
+  }
+
+  # Allow Terraform to update the task definition without recreating the service.
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+
+  tags = local.common_tags
+
+  depends_on = [aws_lb_listener_rule.main]
+}
