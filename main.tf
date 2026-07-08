@@ -30,6 +30,9 @@ locals {
   valid_memory_list = lookup(local.valid_cpu_memory_pairs, local.task_cpu, [])
   cpu_memory_valid  = contains(local.valid_memory_list, tonumber(local.task_memory))
 
+  # Extract spring_profiles_active from metadata; default to "default"
+  spring_profiles_active = try(var.metadata.spring_profiles_active, "default")
+
   # Build the list of container definition objects consumed by aws_ecs_task_definition.
   container_definitions = [
     for name, c in var.containers : {
@@ -42,9 +45,13 @@ locals {
       command    = length(c.args) > 0 ? c.args : null
 
       # Convert env map to the ECS name/value list format.
-      environment = [
-        for k, v in c.env : { name = k, value = v }
-      ]
+      # Inject SPRING_PROFILES_ACTIVE into primary container.
+      environment = concat(
+        [for k, v in c.env : { name = k, value = v }],
+        name == local.primary_container_name ? [
+          { name = "SPRING_PROFILES_ACTIVE", value = local.spring_profiles_active }
+        ] : []
+      )
 
       # Expose service_port on the primary container; other containers keep their own ports.
       portMappings = name == local.primary_container_name ? [
