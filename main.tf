@@ -198,12 +198,12 @@ resource "aws_lb_target_group" "main" {
   target_type = "ip"
 
   health_check {
-    path                = "/"
+    path                = var.health_check_path
     protocol            = "HTTP"
     healthy_threshold   = 2
     unhealthy_threshold = 3
     interval            = 30
-    timeout             = 5
+    timeout             = 10
     matcher             = "200-399"
   }
 

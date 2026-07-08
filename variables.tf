@@ -60,6 +60,12 @@ variable "service_port" {
   default     = 8080
 }
 
+variable "health_check_path" {
+  description = "Health check endpoint path for ALB target group (e.g., /actuator/health for Spring Boot)."
+  type        = string
+  default     = "/actuator/health"
+}
+
 variable "desired_count" {
   description = "Number of ECS task instances to run."
   type        = number
