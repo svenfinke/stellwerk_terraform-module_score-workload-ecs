@@ -147,10 +147,10 @@ resource "aws_vpc_security_group_ingress_rule" "ecs_from_alb" {
 
 resource "aws_lb" "main" {
   name               = local.name_prefix
-  internal           = false
+  internal           = true
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
-  subnets            = data.aws_subnets.public.ids
+  subnets            = data.aws_subnets.private.ids
 
   tags = local.common_tags
 }
