@@ -71,6 +71,46 @@ resource "aws_cloudwatch_log_group" "main" {
 }
 
 # ---------------------------------------------------------------------------
+# ECS Cluster
+# ---------------------------------------------------------------------------
+
+resource "aws_ecs_cluster" "main" {
+  name = local.name_prefix
+
+  tags = local.common_tags
+}
+
+# ---------------------------------------------------------------------------
+# Security Group — ALB
+# ---------------------------------------------------------------------------
+
+resource "aws_security_group" "alb" {
+  name        = "${local.name_prefix}-alb"
+  description = "ALB for ${local.name_prefix}"
+  vpc_id      = data.aws_vpc.main.id
+
+  ingress {
+    description = "Allow inbound HTTP from the internet"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description     = "Allow outbound to ECS tasks on service port"
+    from_port       = var.service_port
+    to_port         = var.service_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs.id]
+  }
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-alb"
+  })
+}
+
+# ---------------------------------------------------------------------------
 # Security Group — ECS tasks
 # ---------------------------------------------------------------------------
 
@@ -78,14 +118,6 @@ resource "aws_security_group" "ecs" {
   name        = "${local.name_prefix}-ecs"
   description = "ECS tasks for ${local.name_prefix}"
   vpc_id      = data.aws_vpc.main.id
-
-  ingress {
-    description = "Allow inbound traffic on service port from within the VPC"
-    from_port   = var.service_port
-    to_port     = var.service_port
-    protocol    = "tcp"
-    cidr_blocks = [data.aws_vpc.main.cidr_block]
-  }
 
   egress {
     description = "Allow all outbound traffic"
@@ -100,25 +132,41 @@ resource "aws_security_group" "ecs" {
   })
 }
 
+resource "aws_vpc_security_group_ingress_rule" "ecs_from_alb" {
+  security_group_id            = aws_security_group.ecs.id
+  referenced_security_group_id = aws_security_group.alb.id
+  from_port                    = var.service_port
+  to_port                      = var.service_port
+  ip_protocol                  = "tcp"
+  description                  = "Allow inbound traffic on service port from ALB"
+}
+
 # ---------------------------------------------------------------------------
-# ECS Task Definition
+# Application Load Balancer
 # ---------------------------------------------------------------------------
 
-resource "aws_ecs_task_definition" "main" {
-  family                   = local.name_prefix
-  requires_compatibilities = ["FARGATE"]
-  network_mode             = "awsvpc"
-  cpu                      = local.task_cpu
-  memory                   = local.task_memory
+resource "aws_lb" "main" {
+  name               = local.name_prefix
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb.id]
+  subnets            = data.aws_subnets.public.ids
 
-  execution_role_arn = aws_iam_role.execution.arn
-  task_role_arn      = aws_iam_role.task.arn
+  tags = local.common_tags
+}
 
-  container_definitions = jsonencode(local.container_definitions)
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.main.arn
+  port              = 80
+  protocol          = "HTTP"
 
-  runtime_platform {
-    operating_system_family = "LINUX"
-    cpu_architecture        = "X86_64"
+  default_action {
+    type = "fixed-response"
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "Not Found"
+      status_code  = "404"
+    }
   }
 
   tags = local.common_tags
@@ -157,7 +205,7 @@ resource "aws_lb_target_group" "main" {
 # ---------------------------------------------------------------------------
 
 resource "aws_lb_listener_rule" "main" {
-  listener_arn = var.lb_listener_arn
+  listener_arn = aws_lb_listener.http.arn
 
   action {
     type             = "forward"
@@ -174,18 +222,42 @@ resource "aws_lb_listener_rule" "main" {
 }
 
 # ---------------------------------------------------------------------------
+# ECS Task Definition
+# ---------------------------------------------------------------------------
+
+resource "aws_ecs_task_definition" "main" {
+  family                   = local.name_prefix
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = local.task_cpu
+  memory                   = local.task_memory
+
+  execution_role_arn = aws_iam_role.execution.arn
+  task_role_arn      = aws_iam_role.task.arn
+
+  container_definitions = jsonencode(local.container_definitions)
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "X86_64"
+  }
+
+  tags = local.common_tags
+}
+
+# ---------------------------------------------------------------------------
 # ECS Service
 # ---------------------------------------------------------------------------
 
 resource "aws_ecs_service" "main" {
   name            = local.name_prefix
-  cluster         = data.aws_ecs_cluster.main.arn
+  cluster         = aws_ecs_cluster.main.arn
   task_definition = aws_ecs_task_definition.main.arn
   desired_count   = var.desired_count
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = data.aws_subnets.selected.ids
+    subnets          = data.aws_subnets.private.ids
     security_groups  = [aws_security_group.ecs.id]
     assign_public_ip = false
   }

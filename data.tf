@@ -5,7 +5,7 @@ data "aws_vpc" "main" {
   }
 }
 
-data "aws_subnets" "selected" {
+data "aws_subnets" "public" {
   filter {
     name   = "vpc-id"
     values = [data.aws_vpc.main.id]
@@ -13,10 +13,18 @@ data "aws_subnets" "selected" {
 
   filter {
     name   = "tag:Tier"
-    values = [var.subnet_tier]
+    values = ["public"]
   }
 }
 
-data "aws_ecs_cluster" "main" {
-  cluster_name = var.cluster_name
+data "aws_subnets" "private" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.main.id]
+  }
+
+  filter {
+    name   = "tag:Tier"
+    values = ["private"]
+  }
 }

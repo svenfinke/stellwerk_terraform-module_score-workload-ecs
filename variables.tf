@@ -5,19 +5,16 @@
 variable "res_id" {
   description = "Humanitec resource ID. Used for unique resource naming."
   type        = string
-  default     = "path" 
 }
 
 variable "app_id" {
   description = "Humanitec application ID. Used for resource naming and tagging."
   type        = string
-  default     = "path"
 }
 
 variable "env_id" {
   description = "Humanitec environment ID. Used for resource naming and tagging."
   type        = string
-  default     = "develop"
 }
 
 # ---------------------------------------------------------------------------
@@ -51,20 +48,6 @@ variable "containers" {
 }
 
 # ---------------------------------------------------------------------------
-# Infrastructure references
-# ---------------------------------------------------------------------------
-
-variable "cluster_name" {
-  description = "Name of the existing ECS cluster to deploy the service into."
-  type        = string
-}
-
-variable "lb_listener_arn" {
-  description = "ARN of the existing ALB listener to attach a forwarding rule to."
-  type        = string
-}
-
-# ---------------------------------------------------------------------------
 # Service configuration
 # ---------------------------------------------------------------------------
 
@@ -78,21 +61,4 @@ variable "desired_count" {
   description = "Number of ECS task instances to run."
   type        = number
   default     = 1
-}
-
-variable "subnet_tier" {
-  description = "Value of the 'Tier' tag used to filter subnets within the orch-aws-vpc VPC."
-  type        = string
-  default     = "private"
-}
-
-variable "service" {
-  description = "Service name"
-  type        = string
-}
-
-variable "metadata" {
-  description = "Metadata for the workload, including optional spring_profiles_active."
-  type = map
-  default = {}
 }
