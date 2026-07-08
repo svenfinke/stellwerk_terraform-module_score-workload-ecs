@@ -90,6 +90,6 @@ variable "service" {
 
 variable "metadata" {
   description = "Metadata for the workload, including optional spring_profiles_active."
-  type = object
+  type = map
   default = {}
 }
