@@ -5,16 +5,19 @@
 variable "res_id" {
   description = "Humanitec resource ID. Used for unique resource naming."
   type        = string
+  default     = "path" 
 }
 
 variable "app_id" {
   description = "Humanitec application ID. Used for resource naming and tagging."
   type        = string
+  default     = "path"
 }
 
 variable "env_id" {
   description = "Humanitec environment ID. Used for resource naming and tagging."
   type        = string
+  default     = "develop"
 }
 
 # ---------------------------------------------------------------------------
