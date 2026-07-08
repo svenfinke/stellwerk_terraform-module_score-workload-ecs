@@ -10,11 +10,6 @@ data "aws_subnets" "public" {
     name   = "vpc-id"
     values = [data.aws_vpc.main.id]
   }
-
-  filter {
-    name   = "tag:Tier"
-    values = ["public"]
-  }
 }
 
 data "aws_subnets" "private" {
